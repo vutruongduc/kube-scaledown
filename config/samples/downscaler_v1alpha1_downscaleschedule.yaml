@@ -1,0 +1,9 @@
+apiVersion: downscaler.sipher.gg/v1alpha1
+kind: DownscaleSchedule
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-scaledown
+    app.kubernetes.io/managed-by: kustomize
+  name: downscaleschedule-sample
+spec:
+  # TODO(user): Add fields here
