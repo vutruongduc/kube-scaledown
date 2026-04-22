@@ -140,6 +140,11 @@ func ScaleUp(ctx context.Context, c client.Client, s Scaler, obj client.Object) 
 		return false, err
 	}
 	if current >= original {
+		if ses, ok := s.(SideEffectScaler); ok {
+			if err := ses.BeforeScaleUp(ctx, c, obj); err != nil {
+				return false, fmt.Errorf("pre-scaleup side effects for %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+			}
+		}
 		ClearOriginalReplicas(obj)
 		if err := c.Update(ctx, obj); err != nil {
 			return false, fmt.Errorf("clearing annotation on %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
