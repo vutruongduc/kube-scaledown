@@ -37,6 +37,7 @@ import (
 
 	downscalerv1alpha1 "github.com/sipherxyz/kube-scaledown/api/v1alpha1"
 	"github.com/sipherxyz/kube-scaledown/internal/controller"
+	"github.com/sipherxyz/kube-scaledown/internal/scaler"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -179,8 +180,9 @@ func main() {
 	}
 
 	if err := (&controller.DownscaleScheduleReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Registry: scaler.NewRegistry(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "DownscaleSchedule")
 		os.Exit(1)
