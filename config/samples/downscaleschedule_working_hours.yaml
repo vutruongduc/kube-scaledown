@@ -2,6 +2,7 @@ apiVersion: downscaler.sipher.gg/v1alpha1
 kind: DownscaleSchedule
 metadata:
   name: working-hours
+  namespace: kube-scaledown-system
 spec:
   uptime: "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh"
   downtime: "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh"
@@ -10,9 +11,11 @@ spec:
     - deployments
     - statefulsets
     - fleets.agones.dev
+    - cronjobs
   excludeNamespaces:
     - kube-system
     - kube-downscaler
+    - kube-scaledown-system
     - argocd
     - cert-manager
     - ingress-nginx
