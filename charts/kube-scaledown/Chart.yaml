@@ -1,0 +1,16 @@
+apiVersion: v2
+name: kube-scaledown
+description: Kubernetes controller that scales down workloads (Deployments, StatefulSets, Fleets, CronJobs) on a schedule.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - controller
+  - scaling
+  - agones
+home: https://github.com/vutruongduc/kube-scaledown
+sources:
+  - https://github.com/vutruongduc/kube-scaledown
+maintainers:
+  - name: vutruongduc

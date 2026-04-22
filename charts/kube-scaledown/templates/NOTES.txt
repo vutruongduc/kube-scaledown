@@ -1,0 +1,7 @@
+kube-scaledown has been installed in namespace {{ .Release.Namespace }}.
+
+Create a DownscaleSchedule to start managing workloads:
+
+  kubectl apply -f https://raw.githubusercontent.com/vutruongduc/kube-scaledown/master/config/samples/downscaleschedule_working_hours.yaml
+
+Docs: https://github.com/vutruongduc/kube-scaledown
