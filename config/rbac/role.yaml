@@ -5,6 +5,45 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - agones.dev
+  resources:
+  - fleets
+  - fleets/scale
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - downscaler.sipher.gg
   resources:
   - downscaleschedules
@@ -19,14 +58,19 @@ rules:
 - apiGroups:
   - downscaler.sipher.gg
   resources:
-  - downscaleschedules/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - downscaler.sipher.gg
-  resources:
   - downscaleschedules/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - autoscaling.agones.dev
+  resources:
+  - fleetautoscalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
