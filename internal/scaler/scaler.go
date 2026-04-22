@@ -100,6 +100,14 @@ func ClearOriginalReplicas(obj client.Object) {
 	obj.SetAnnotations(annotations)
 }
 
+// SideEffectScaler can apply side effects before scaling operations.
+// BeforeScaleDown is called before the resource is scaled down (may mutate obj annotations).
+// BeforeScaleUp is called before the resource is scaled up (may mutate obj annotations).
+type SideEffectScaler interface {
+	BeforeScaleDown(ctx context.Context, c client.Client, obj client.Object) error
+	BeforeScaleUp(ctx context.Context, c client.Client, obj client.Object) error
+}
+
 // ScaleDown scales a resource down and saves original replicas. Returns true if scaled.
 func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object, downtimeReplicas int32) (bool, error) {
 	current, err := s.GetReplicas(obj)
@@ -108,6 +116,11 @@ func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object
 	}
 	if current <= downtimeReplicas {
 		return false, nil
+	}
+	if ses, ok := s.(SideEffectScaler); ok {
+		if err := ses.BeforeScaleDown(ctx, c, obj); err != nil {
+			return false, fmt.Errorf("pre-scaledown side effects for %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+		}
 	}
 	SaveOriginalReplicas(obj, current)
 	if err := s.SetReplicas(obj, downtimeReplicas); err != nil {
@@ -132,6 +145,11 @@ func ScaleUp(ctx context.Context, c client.Client, s Scaler, obj client.Object) 
 			return false, fmt.Errorf("clearing annotation on %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
 		}
 		return false, nil
+	}
+	if ses, ok := s.(SideEffectScaler); ok {
+		if err := ses.BeforeScaleUp(ctx, c, obj); err != nil {
+			return false, fmt.Errorf("pre-scaleup side effects for %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+		}
 	}
 	ClearOriginalReplicas(obj)
 	if err := s.SetReplicas(obj, original); err != nil {
