@@ -11,13 +11,28 @@ spec:
     kind: DownscaleSchedule
     listKind: DownscaleScheduleList
     plural: downscaleschedules
+    shortNames:
+    - ds
     singular: downscaleschedule
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.currentState
+      name: State
+      type: string
+    - jsonPath: .status.managedResources
+      name: Managed
+      type: integer
+    - jsonPath: .status.scaledDownResources
+      name: Scaled Down
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: DownscaleSchedule is the Schema for the downscaleschedules API
+        description: DownscaleSchedule is the Schema for the downscaleschedules API.
         properties:
           apiVersion:
             description: |-
@@ -37,88 +52,86 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of DownscaleSchedule
+            description: DownscaleScheduleSpec defines the desired schedule configuration.
             properties:
-              foo:
-                description: foo is an example field of DownscaleSchedule. Edit downscaleschedule_types.go
-                  to remove/update
+              downtime:
+                description: Downtime schedule in format "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh,
+                  Sun 00:00-24:00 Asia/Ho_Chi_Minh"
                 type: string
-            type: object
-          status:
-            description: status defines the observed state of DownscaleSchedule
-            properties:
-              conditions:
-                description: |-
-                  conditions represent the current state of the DownscaleSchedule resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+              downtimeReplicas:
+                default: 0
+                description: 'Replica count during downtime (default: 0)'
+                format: int32
+                minimum: 0
+                type: integer
+              excludeNamespaces:
+                description: Namespaces to exclude
                 items:
-                  description: Condition contains details for one aspect of the current
-                    state of this API Resource.
+                  type: string
+                type: array
+              excludeResources:
+                description: Individual resources to exclude
+                items:
+                  description: ResourceRef identifies a specific resource to exclude.
                   properties:
-                    lastTransitionTime:
-                      description: |-
-                        lastTransitionTime is the last time the condition transitioned from one status to another.
-                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
-                      format: date-time
+                    kind:
+                      description: Resource kind (e.g., "Deployment", "Fleet")
                       type: string
-                    message:
-                      description: |-
-                        message is a human readable message indicating details about the transition.
-                        This may be an empty string.
-                      maxLength: 32768
+                    name:
+                      description: Resource name
                       type: string
-                    observedGeneration:
-                      description: |-
-                        observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
-                      format: int64
-                      minimum: 0
-                      type: integer
-                    reason:
-                      description: |-
-                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
-                        Producers of specific condition types may define expected values and meanings for this field,
-                        and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
-                      maxLength: 1024
-                      minLength: 1
-                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
-                      type: string
-                    status:
-                      description: status of the condition, one of True, False, Unknown.
-                      enum:
-                      - "True"
-                      - "False"
-                      - Unknown
-                      type: string
-                    type:
-                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
-                      maxLength: 316
-                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                    namespace:
+                      description: Resource namespace
                       type: string
                   required:
-                  - lastTransitionTime
-                  - message
-                  - reason
-                  - status
-                  - type
+                  - kind
+                  - name
+                  - namespace
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
+              includeNamespaces:
+                description: Namespaces to include (empty = all namespaces)
+                items:
+                  type: string
+                type: array
+              includeResources:
+                description: Resource types to manage (e.g., "deployments", "statefulsets",
+                  "fleets.agones.dev")
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              uptime:
+                description: Uptime schedule in format "Mon-Fri 08:00-20:00 Asia/Ho_Chi_Minh"
+                type: string
+            required:
+            - downtime
+            - includeResources
+            - uptime
             type: object
-        required:
-        - spec
+          status:
+            description: DownscaleScheduleStatus defines the observed state.
+            properties:
+              currentState:
+                description: 'Current state: "uptime" or "downtime"'
+                type: string
+              lastScaleDown:
+                description: Last time resources were scaled down
+                format: date-time
+                type: string
+              lastScaleUp:
+                description: Last time resources were scaled up
+                format: date-time
+                type: string
+              managedResources:
+                description: Number of resources managed by this schedule
+                format: int32
+                type: integer
+              scaledDownResources:
+                description: Number of resources currently scaled down
+                format: int32
+                type: integer
+            type: object
         type: object
     served: true
     storage: true

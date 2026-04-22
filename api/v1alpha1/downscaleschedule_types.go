@@ -1,89 +1,94 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// DownscaleScheduleSpec defines the desired state of DownscaleSchedule
+// DownscaleScheduleSpec defines the desired schedule configuration.
 type DownscaleScheduleSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// Uptime schedule in format "Mon-Fri 08:00-20:00 Asia/Ho_Chi_Minh"
+	// +kubebuilder:validation:Required
+	Uptime string `json:"uptime"`
 
-	// foo is an example field of DownscaleSchedule. Edit downscaleschedule_types.go to remove/update
+	// Downtime schedule in format "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh"
+	// +kubebuilder:validation:Required
+	Downtime string `json:"downtime"`
+
+	// Replica count during downtime (default: 0)
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	DowntimeReplicas int32 `json:"downtimeReplicas,omitempty"`
+
+	// Resource types to manage (e.g., "deployments", "statefulsets", "fleets.agones.dev")
+	// +kubebuilder:validation:MinItems=1
+	IncludeResources []string `json:"includeResources"`
+
+	// Namespaces to include (empty = all namespaces)
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	IncludeNamespaces []string `json:"includeNamespaces,omitempty"`
+
+	// Namespaces to exclude
+	// +optional
+	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
+
+	// Individual resources to exclude
+	// +optional
+	ExcludeResources []ResourceRef `json:"excludeResources,omitempty"`
 }
 
-// DownscaleScheduleStatus defines the observed state of DownscaleSchedule.
+// ResourceRef identifies a specific resource to exclude.
+type ResourceRef struct {
+	// Resource name
+	Name string `json:"name"`
+	// Resource namespace
+	Namespace string `json:"namespace"`
+	// Resource kind (e.g., "Deployment", "Fleet")
+	Kind string `json:"kind"`
+}
+
+// DownscaleScheduleStatus defines the observed state.
 type DownscaleScheduleStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the DownscaleSchedule resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
-	// +listType=map
-	// +listMapKey=type
+	// Last time resources were scaled down
 	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	LastScaleDown *metav1.Time `json:"lastScaleDown,omitempty"`
+
+	// Last time resources were scaled up
+	// +optional
+	LastScaleUp *metav1.Time `json:"lastScaleUp,omitempty"`
+
+	// Current state: "uptime" or "downtime"
+	CurrentState string `json:"currentState,omitempty"`
+
+	// Number of resources managed by this schedule
+	ManagedResources int32 `json:"managedResources,omitempty"`
+
+	// Number of resources currently scaled down
+	ScaledDownResources int32 `json:"scaledDownResources,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=ds
+// +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.currentState`
+// +kubebuilder:printcolumn:name="Managed",type=integer,JSONPath=`.status.managedResources`
+// +kubebuilder:printcolumn:name="Scaled Down",type=integer,JSONPath=`.status.scaledDownResources`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// DownscaleSchedule is the Schema for the downscaleschedules API
+// DownscaleSchedule is the Schema for the downscaleschedules API.
 type DownscaleSchedule struct {
-	metav1.TypeMeta `json:",inline"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// metadata is a standard object metadata
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of DownscaleSchedule
-	// +required
-	Spec DownscaleScheduleSpec `json:"spec"`
-
-	// status defines the observed state of DownscaleSchedule
-	// +optional
-	Status DownscaleScheduleStatus `json:"status,omitzero"`
+	Spec   DownscaleScheduleSpec   `json:"spec,omitempty"`
+	Status DownscaleScheduleStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// DownscaleScheduleList contains a list of DownscaleSchedule
+// DownscaleScheduleList contains a list of DownscaleSchedule.
 type DownscaleScheduleList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []DownscaleSchedule `json:"items"`
 }
 
