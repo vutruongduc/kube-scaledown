@@ -1,5 +1,4 @@
 ## Append samples of your project ##
 resources:
-- downscaler_v1alpha1_downscaleschedule.yaml
 - downscaleschedule_working_hours.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
