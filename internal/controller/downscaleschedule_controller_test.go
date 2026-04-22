@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	downscalerv1alpha1 "github.com/sipherxyz/kube-scaledown/api/v1alpha1"
+	"github.com/sipherxyz/kube-scaledown/internal/scaler"
 )
 
 var _ = Describe("DownscaleSchedule Controller", func() {
@@ -51,7 +52,12 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: downscalerv1alpha1.DownscaleScheduleSpec{
+						Uptime:           "Mon-Fri 08:00-18:00 UTC",
+						Downtime:         "Mon-Fri 18:00-08:00 UTC",
+						DowntimeReplicas: 0,
+						IncludeResources: []string{"deployments"},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -69,8 +75,9 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &DownscaleScheduleReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Registry: scaler.NewRegistry(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
