@@ -34,6 +34,9 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{scalers: make(map[string]Scaler)}
 	r.Register(&DeploymentScaler{})
+	r.Register(&StatefulSetScaler{})
+	r.Register(&CronJobScaler{})
+	r.Register(&FleetScaler{})
 	return r
 }
 
