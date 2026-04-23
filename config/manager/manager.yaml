@@ -63,7 +63,7 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: atherlabs.azurecr.io/kube-scaledown:0.1.0
+        image: ghcr.io/vutruongduc/kube-scaledown:0.1.0
         name: manager
         ports: []
         securityContext:
