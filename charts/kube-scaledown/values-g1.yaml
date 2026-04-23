@@ -1,0 +1,25 @@
+# G1 AKS cluster overrides
+# Edit this file to change schedule config for G1.
+# Add namespaces to excludeNamespaces to protect them from downscaling.
+# Commit + push — ArgoCD auto-syncs.
+
+schedule:
+  excludeNamespaces:
+    - kube-system
+    - kube-downscaler
+    - kube-scaledown-system
+    - argocd
+    - cert-manager
+    - ingress-nginx
+    - ingress-nginx-internal
+    - monitoring
+    - sipher-system
+    - gatekeeper-system
+    - aks-command
+    - n8n
+    - ather-os
+    - unleash
+    - nightshift
+    - s2
+    - pve-tool
+    - trungthuy
