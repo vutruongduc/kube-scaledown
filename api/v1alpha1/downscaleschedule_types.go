@@ -10,10 +10,6 @@ type DownscaleScheduleSpec struct {
 	// +kubebuilder:validation:Required
 	Uptime string `json:"uptime"`
 
-	// Downtime schedule in format "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh"
-	// +kubebuilder:validation:Required
-	Downtime string `json:"downtime"`
-
 	// Replica count during downtime (default: 0)
 	// +kubebuilder:default=0
 	// +kubebuilder:validation:Minimum=0

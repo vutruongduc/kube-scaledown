@@ -54,7 +54,6 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 					},
 					Spec: downscalerv1alpha1.DownscaleScheduleSpec{
 						Uptime:           "Mon-Fri 08:00-18:00 UTC",
-						Downtime:         "Mon-Fri 18:00-08:00 UTC",
 						DowntimeReplicas: 0,
 						IncludeResources: []string{"deployments"},
 					},
