@@ -51,7 +51,6 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 				},
 				Spec: downscalerv1alpha1.DownscaleScheduleSpec{
 					Uptime:            "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh",
-					Downtime:          "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh",
 					DowntimeReplicas:  0,
 					IncludeResources:  []string{"deployments"},
 					IncludeNamespaces: []string{"test-ns"},
@@ -100,7 +99,6 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 				},
 				Spec: downscalerv1alpha1.DownscaleScheduleSpec{
 					Uptime:            "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh",
-					Downtime:          "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh",
 					DowntimeReplicas:  0,
 					IncludeResources:  []string{"deployments"},
 					IncludeNamespaces: []string{"test-ns"},
@@ -156,7 +154,6 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 				},
 				Spec: downscalerv1alpha1.DownscaleScheduleSpec{
 					Uptime:            "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh",
-					Downtime:          "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh",
 					DowntimeReplicas:  0,
 					IncludeResources:  []string{"deployments"},
 					IncludeNamespaces: []string{"test-ns"},
