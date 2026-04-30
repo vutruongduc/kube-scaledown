@@ -67,7 +67,6 @@ affinity: {}
 schedule:
   enabled: true
   uptime: "Mon-Sat 08:00-20:00 UTC"
-  downtime: "Mon-Sat 20:00-08:00 UTC, Sun 00:00-24:00 UTC"
   downtimeReplicas: 0
   includeResources:
     - deployments

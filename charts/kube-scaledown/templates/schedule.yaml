@@ -8,7 +8,6 @@ metadata:
     {{- include "kube-scaledown.labels" . | nindent 4 }}
 spec:
   uptime: {{ .Values.schedule.uptime | quote }}
-  downtime: {{ .Values.schedule.downtime | quote }}
   downtimeReplicas: {{ .Values.schedule.downtimeReplicas }}
   includeResources:
     {{- toYaml .Values.schedule.includeResources | nindent 4 }}
