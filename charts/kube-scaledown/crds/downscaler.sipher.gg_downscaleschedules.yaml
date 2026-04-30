@@ -54,10 +54,6 @@ spec:
           spec:
             description: DownscaleScheduleSpec defines the desired schedule configuration.
             properties:
-              downtime:
-                description: Downtime schedule in format "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh,
-                  Sun 00:00-24:00 Asia/Ho_Chi_Minh"
-                type: string
               downtimeReplicas:
                 default: 0
                 description: 'Replica count during downtime (default: 0)'
@@ -105,7 +101,6 @@ spec:
                 description: Uptime schedule in format "Mon-Fri 08:00-20:00 Asia/Ho_Chi_Minh"
                 type: string
             required:
-            - downtime
             - includeResources
             - uptime
             type: object
