@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	AnnotationOriginalReplicas = "downscaler.sipher.gg/original-replicas"
-	AnnotationExclude          = "downscaler.sipher.gg/exclude"
+	AnnotationOriginalReplicas       = "downscaler.sipher.gg/original-replicas"
+	LegacyAnnotationOriginalReplicas = "downscaler/original-replicas"
+	AnnotationExclude                = "downscaler.sipher.gg/exclude"
 )
 
 // Scaler knows how to get and set replicas for a specific resource type.
@@ -81,6 +82,9 @@ func GetOriginalReplicas(obj client.Object) int32 {
 	}
 	val, ok := annotations[AnnotationOriginalReplicas]
 	if !ok {
+		val, ok = annotations[LegacyAnnotationOriginalReplicas]
+	}
+	if !ok {
 		return 1
 	}
 	n, err := strconv.Atoi(val)
@@ -97,6 +101,7 @@ func ClearOriginalReplicas(obj client.Object) {
 		return
 	}
 	delete(annotations, AnnotationOriginalReplicas)
+	delete(annotations, LegacyAnnotationOriginalReplicas)
 	obj.SetAnnotations(annotations)
 }
 

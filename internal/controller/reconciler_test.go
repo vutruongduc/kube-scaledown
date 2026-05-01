@@ -170,5 +170,111 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 				return *d.Spec.Replicas
 			}, "5s", interval).Should(Equal(int32(2)))
 		})
+
+		It("should restore a scaled-down deployment before excluding its namespace", func() {
+			bkk, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
+			mockNow = time.Date(2026, 4, 20, 22, 0, 0, 0, bkk) // Monday 22:00 (downtime)
+
+			deploy := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "excluded-namespace-restore-test",
+					Namespace: "test-ns",
+					Annotations: map[string]string{
+						scaler.AnnotationOriginalReplicas: "3",
+					},
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(0),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "excluded-namespace-restore-test"},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "excluded-namespace-restore-test"}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "test", Image: "nginx"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deploy)).To(Succeed())
+
+			ds := &downscalerv1alpha1.DownscaleSchedule{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "excluded-namespace-restore-schedule",
+					Namespace: "default",
+				},
+				Spec: downscalerv1alpha1.DownscaleScheduleSpec{
+					Uptime:            "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh",
+					DowntimeReplicas:  0,
+					IncludeResources:  []string{"deployments"},
+					ExcludeNamespaces: []string{"test-ns"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ds)).To(Succeed())
+
+			Eventually(func() int32 {
+				var d appsv1.Deployment
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "excluded-namespace-restore-test", Namespace: "test-ns"}, &d)).To(Succeed())
+				if d.Spec.Replicas == nil {
+					return -1
+				}
+				return *d.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(3)))
+
+			var d appsv1.Deployment
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "excluded-namespace-restore-test", Namespace: "test-ns"}, &d)).To(Succeed())
+			Expect(d.Annotations).NotTo(HaveKey(scaler.AnnotationOriginalReplicas))
+		})
+
+		It("should restore deployments with the legacy original replicas annotation", func() {
+			bkk, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
+			mockNow = time.Date(2026, 4, 20, 22, 0, 0, 0, bkk) // Monday 22:00 (downtime)
+
+			deploy := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "legacy-restore-test",
+					Namespace: "test-ns",
+					Annotations: map[string]string{
+						"downscaler/original-replicas": "4",
+					},
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(0),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "legacy-restore-test"},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "legacy-restore-test"}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "test", Image: "nginx"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deploy)).To(Succeed())
+
+			ds := &downscalerv1alpha1.DownscaleSchedule{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "legacy-restore-schedule",
+					Namespace: "default",
+				},
+				Spec: downscalerv1alpha1.DownscaleScheduleSpec{
+					Uptime:            "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh",
+					DowntimeReplicas:  0,
+					IncludeResources:  []string{"deployments"},
+					ExcludeNamespaces: []string{"test-ns"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ds)).To(Succeed())
+
+			Eventually(func() int32 {
+				var d appsv1.Deployment
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "legacy-restore-test", Namespace: "test-ns"}, &d)).To(Succeed())
+				if d.Spec.Replicas == nil {
+					return -1
+				}
+				return *d.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(4)))
+
+			var d appsv1.Deployment
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "legacy-restore-test", Namespace: "test-ns"}, &d)).To(Succeed())
+			Expect(d.Annotations).NotTo(HaveKey("downscaler/original-replicas"))
+		})
 	})
 })

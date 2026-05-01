@@ -31,6 +31,7 @@ type DownscaleScheduleReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=agones.dev,resources=fleets;fleets/scale,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=autoscaling.agones.dev,resources=fleetautoscalers,verbs=create;delete;get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -70,10 +71,20 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 
 		for _, obj := range objects {
-			if scaler.IsExcluded(obj) {
-				continue
-			}
-			if r.isResourceExcluded(obj, ds.Spec.ExcludeResources) {
+			excluded := scaler.IsExcluded(obj) ||
+				r.isNamespaceExcluded(obj, ds.Spec.ExcludeNamespaces) ||
+				r.isResourceExcluded(obj, ds.Spec.ExcludeResources)
+			if excluded {
+				if hasOriginalReplicasAnnotation(obj) {
+					scaled, err := scaler.ScaleUp(ctx, r.Client, s, obj)
+					if err != nil {
+						logger.Error(err, "failed to restore excluded resource", "resource", obj.GetName(), "namespace", obj.GetNamespace())
+						continue
+					}
+					if scaled {
+						logger.Info("restored excluded resource", "resource", obj.GetName(), "namespace", obj.GetNamespace())
+					}
+				}
 				continue
 			}
 
@@ -138,7 +149,7 @@ func (r *DownscaleScheduleReconciler) listResources(ctx context.Context, s scale
 		if err := r.List(ctx, list); err != nil {
 			return nil, err
 		}
-		return r.filterByNamespace(extractObjects(list), ds.Spec.ExcludeNamespaces), nil
+		return extractObjects(list), nil
 	}
 
 	var result []client.Object
@@ -182,21 +193,16 @@ func extractObjects(list client.ObjectList) []client.Object {
 	}
 }
 
-func (r *DownscaleScheduleReconciler) filterByNamespace(objs []client.Object, excludeNamespaces []string) []client.Object {
+func (r *DownscaleScheduleReconciler) isNamespaceExcluded(obj client.Object, excludeNamespaces []string) bool {
 	if len(excludeNamespaces) == 0 {
-		return objs
+		return false
 	}
-	excludeSet := make(map[string]bool, len(excludeNamespaces))
 	for _, ns := range excludeNamespaces {
-		excludeSet[ns] = true
-	}
-	var filtered []client.Object
-	for _, obj := range objs {
-		if !excludeSet[obj.GetNamespace()] {
-			filtered = append(filtered, obj)
+		if ns == obj.GetNamespace() {
+			return true
 		}
 	}
-	return filtered
+	return false
 }
 
 func (r *DownscaleScheduleReconciler) isResourceExcluded(obj client.Object, excludes []downscalerv1alpha1.ResourceRef) bool {
@@ -213,7 +219,10 @@ func hasOriginalReplicasAnnotation(obj client.Object) bool {
 	if annotations == nil {
 		return false
 	}
-	_, ok := annotations[scaler.AnnotationOriginalReplicas]
+	if _, ok := annotations[scaler.AnnotationOriginalReplicas]; ok {
+		return true
+	}
+	_, ok := annotations[scaler.LegacyAnnotationOriginalReplicas]
 	return ok
 }
 
