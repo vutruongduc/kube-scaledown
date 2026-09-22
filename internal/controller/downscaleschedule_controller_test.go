@@ -53,9 +53,10 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 						Namespace: "default",
 					},
 					Spec: downscalerv1alpha1.DownscaleScheduleSpec{
-						Uptime:           "Mon-Fri 08:00-18:00 UTC",
-						DowntimeReplicas: 0,
-						IncludeResources: []string{"deployments"},
+						Uptime:            "Mon-Fri 08:00-18:00 UTC",
+						DowntimeReplicas:  0,
+						IncludeResources:  []string{"deployments"},
+						IncludeNamespaces: []string{"controller-scaffold-test"},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
