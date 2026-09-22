@@ -1,14 +1,20 @@
 package scaler
 
 import (
+	"context"
+	"errors"
+	"reflect"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-func int32Ptr(i int32) *int32 { return &i }
 
 func newDeployment(name string, replicas int32, annotations map[string]string) *appsv1.Deployment {
 	return &appsv1.Deployment{
@@ -18,7 +24,7 @@ func newDeployment(name string, replicas int32, annotations map[string]string) *
 			Annotations: annotations,
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(replicas),
+			Replicas: new(replicas),
 		},
 	}
 }
@@ -134,4 +140,191 @@ func TestRegistry(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for unknown resource type")
 	}
+}
+
+func TestScaleDownAndUpRestoreWorkloads(t *testing.T) {
+	tests := []struct {
+		name             string
+		scaler           Scaler
+		object           client.Object
+		originalReplicas int32
+	}{
+		{
+			name:             "Deployment",
+			scaler:           &DeploymentScaler{},
+			object:           newDeployment("deployment", 3, nil),
+			originalReplicas: 3,
+		},
+		{
+			name:   "StatefulSet",
+			scaler: &StatefulSetScaler{},
+			object: &appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "statefulset", Namespace: "default"},
+				Spec:       appsv1.StatefulSetSpec{Replicas: new(int32(4))},
+			},
+			originalReplicas: 4,
+		},
+		{
+			name:   "CronJob",
+			scaler: &CronJobScaler{},
+			object: &batchv1.CronJob{
+				ObjectMeta: metav1.ObjectMeta{Name: "cronjob", Namespace: "default"},
+			},
+			originalReplicas: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			c := fake.NewClientBuilder().WithObjects(tt.object).Build()
+
+			scaled, err := ScaleDown(ctx, c, tt.scaler, tt.object, 0)
+			if err != nil {
+				t.Fatalf("ScaleDown() error = %v", err)
+			}
+			if !scaled {
+				t.Fatal("ScaleDown() = false, want true")
+			}
+
+			stored, err := newObjectOfSameType(tt.object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(tt.object), stored); err != nil {
+				t.Fatal(err)
+			}
+			if replicas, err := tt.scaler.GetReplicas(stored); err != nil || replicas != 0 {
+				t.Fatalf("scaled-down replicas = %d, err = %v, want 0", replicas, err)
+			}
+
+			scaled, err = ScaleUp(ctx, c, tt.scaler, stored)
+			if err != nil {
+				t.Fatalf("ScaleUp() error = %v", err)
+			}
+			if !scaled {
+				t.Fatal("ScaleUp() = false, want true")
+			}
+
+			restored, err := newObjectOfSameType(tt.object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(tt.object), restored); err != nil {
+				t.Fatal(err)
+			}
+			if replicas, err := tt.scaler.GetReplicas(restored); err != nil || replicas != tt.originalReplicas {
+				t.Fatalf("restored replicas = %d, err = %v, want %d", replicas, err, tt.originalReplicas)
+			}
+			if _, ok := restored.GetAnnotations()[AnnotationOriginalReplicas]; ok {
+				t.Fatal("original replicas annotation was not removed")
+			}
+		})
+	}
+}
+
+func TestFleetScaleDownAndUpRestoresAutoscalerAfterConflicts(t *testing.T) {
+	ctx := context.Background()
+	fleet := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "agones.dev/v1",
+		"kind":       "Fleet",
+		"metadata": map[string]any{
+			"name":      "game",
+			"namespace": "default",
+		},
+		"spec": map[string]any{"replicas": int64(5)},
+	}}
+	fleet.SetGroupVersionKind(schema.GroupVersionKind{Group: "agones.dev", Version: "v1", Kind: "Fleet"})
+	fleetAutoscaler := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "autoscaling.agones.dev/v1",
+		"kind":       "FleetAutoscaler",
+		"metadata": map[string]any{
+			"name":      "autoscaler-game",
+			"namespace": "default",
+		},
+		"spec": map[string]any{
+			"fleetName": "game",
+			"policy": map[string]any{
+				"type": "Buffer",
+				"buffer": map[string]any{
+					"bufferSize":  "20%",
+					"minReplicas": int64(2),
+					"maxReplicas": int64(20),
+				},
+			},
+		},
+	}}
+	fleetAutoscaler.SetGroupVersionKind(fleetAutoscalerGVK)
+	wantSpec := fleetAutoscaler.Object["spec"]
+
+	baseClient := fake.NewClientBuilder().WithObjects(fleet, fleetAutoscaler).Build()
+	conflictingClient := &conflictClient{Client: baseClient, remainingUpdateConflicts: 1}
+	s := &FleetScaler{}
+
+	scaled, err := ScaleDown(ctx, conflictingClient, s, fleet, 0)
+	if err != nil {
+		t.Fatalf("ScaleDown() error = %v", err)
+	}
+	if !scaled {
+		t.Fatal("ScaleDown() = false, want true")
+	}
+	if err := baseClient.Get(ctx, client.ObjectKeyFromObject(fleetAutoscaler), &unstructured.Unstructured{Object: map[string]any{"apiVersion": "autoscaling.agones.dev/v1", "kind": "FleetAutoscaler"}}); !apierrors.IsNotFound(err) {
+		t.Fatalf("FleetAutoscaler still exists after scale down: %v", err)
+	}
+
+	storedFleet := &unstructured.Unstructured{}
+	storedFleet.SetGroupVersionKind(fleet.GroupVersionKind())
+	if err := baseClient.Get(ctx, client.ObjectKeyFromObject(fleet), storedFleet); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := storedFleet.GetAnnotations()[annotationFASSpec]; !ok {
+		t.Fatal("FleetAutoscaler spec annotation was lost after update conflict")
+	}
+
+	conflictingClient.remainingUpdateConflicts = 1
+	scaled, err = ScaleUp(ctx, conflictingClient, s, storedFleet)
+	if err != nil {
+		t.Fatalf("ScaleUp() error = %v", err)
+	}
+	if !scaled {
+		t.Fatal("ScaleUp() = false, want true")
+	}
+
+	restoredFleet := &unstructured.Unstructured{}
+	restoredFleet.SetGroupVersionKind(fleet.GroupVersionKind())
+	if err := baseClient.Get(ctx, client.ObjectKeyFromObject(fleet), restoredFleet); err != nil {
+		t.Fatal(err)
+	}
+	if replicas, err := s.GetReplicas(restoredFleet); err != nil || replicas != 5 {
+		t.Fatalf("restored Fleet replicas = %d, err = %v, want 5", replicas, err)
+	}
+	if _, ok := restoredFleet.GetAnnotations()[annotationFASSpec]; ok {
+		t.Fatal("FleetAutoscaler spec annotation was not removed")
+	}
+
+	restoredAutoscaler := &unstructured.Unstructured{}
+	restoredAutoscaler.SetGroupVersionKind(fleetAutoscalerGVK)
+	if err := baseClient.Get(ctx, client.ObjectKeyFromObject(fleetAutoscaler), restoredAutoscaler); err != nil {
+		t.Fatalf("getting restored FleetAutoscaler: %v", err)
+	}
+	if !reflect.DeepEqual(restoredAutoscaler.Object["spec"], wantSpec) {
+		t.Fatalf("restored FleetAutoscaler spec = %#v, want %#v", restoredAutoscaler.Object["spec"], wantSpec)
+	}
+}
+
+type conflictClient struct {
+	client.Client
+	remainingUpdateConflicts int
+}
+
+func (c *conflictClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if c.remainingUpdateConflicts > 0 {
+		c.remainingUpdateConflicts--
+		return apierrors.NewConflict(
+			schema.GroupResource{Group: obj.GetObjectKind().GroupVersionKind().Group, Resource: "workloads"},
+			obj.GetName(),
+			errors.New("simulated update conflict"),
+		)
+	}
+	return c.Client.Update(ctx, obj, opts...)
 }

@@ -48,17 +48,22 @@ affinity: {}
 #
 #   schedule:
 #     uptime: "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh"
-#     downtime: "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh"
 #     downtimeReplicas: 0
 #     includeResources:
 #       - deployments
 #       - statefulsets
 #       - fleets.agones.dev
 #       - cronjobs
+#     includeNamespaces:
+#       - development
 #     excludeNamespaces:
 #       - kube-system
 #       - argocd
 #       - my-critical-namespace
+#     excludeResources:
+#       - name: critical-api
+#         namespace: development
+#         kind: Deployment
 #
 # To exclude a single workload without editing this file:
 #   kubectl annotate deployment <name> -n <ns> downscaler.sipher.gg/exclude=true
@@ -71,5 +76,7 @@ schedule:
   includeResources:
     - deployments
     - statefulsets
+  includeNamespaces: []
   excludeNamespaces:
     - kube-system
+  excludeResources: []

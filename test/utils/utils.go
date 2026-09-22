@@ -62,7 +62,7 @@ func Run(cmd *exec.Cmd) (string, error) {
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "delete", "-f", url)
+	cmd := exec.Command("kubectl", "delete", "-f", url) // #nosec G204 -- The test fixture controls the manifest URL.
 	if _, err := Run(cmd); err != nil {
 		warnError(err)
 	}
@@ -73,7 +73,7 @@ func UninstallCertManager() {
 		"cert-manager-controller",
 	}
 	for _, lease := range kubeSystemLeases {
-		cmd = exec.Command("kubectl", "delete", "lease", lease,
+		cmd = exec.Command("kubectl", "delete", "lease", lease, // #nosec G204 -- The test fixture controls the Lease name.
 			"-n", "kube-system", "--ignore-not-found", "--force", "--grace-period=0")
 		if _, err := Run(cmd); err != nil {
 			warnError(err)
@@ -84,7 +84,7 @@ func UninstallCertManager() {
 // InstallCertManager installs the cert manager bundle.
 func InstallCertManager() error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "apply", "-f", url)
+	cmd := exec.Command("kubectl", "apply", "-f", url) // #nosec G204 -- The test fixture controls the manifest URL.
 	if _, err := Run(cmd); err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func LoadImageToKindClusterWithName(name string) error {
 	if v, ok := os.LookupEnv("KIND"); ok {
 		kindBinary = v
 	}
-	cmd := exec.Command(kindBinary, kindOptions...)
+	cmd := exec.Command(kindBinary, kindOptions...) // #nosec G204 -- The e2e test controls the kind binary and arguments.
 	_, err := Run(cmd)
 	return err
 }

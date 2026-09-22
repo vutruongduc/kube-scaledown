@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -109,6 +110,8 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				}
 				if scaled {
 					logger.Info("scaled down", "resource", obj.GetName(), "namespace", obj.GetNamespace())
+					scaledDownCount++
+					continue
 				}
 				currentReplicas, _ := s.GetReplicas(obj)
 				if currentReplicas <= ds.Spec.DowntimeReplicas {
@@ -118,14 +121,17 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
+	previousState := ds.Status.CurrentState
 	ds.Status.CurrentState = state
 	ds.Status.ManagedResources = managedCount
 	ds.Status.ScaledDownResources = scaledDownCount
-	nowMeta := metav1.NewTime(now)
-	if state == "downtime" {
-		ds.Status.LastScaleDown = &nowMeta
-	} else {
-		ds.Status.LastScaleUp = &nowMeta
+	if previousState != state {
+		nowMeta := metav1.NewTime(now)
+		if state == "downtime" {
+			ds.Status.LastScaleDown = &nowMeta
+		} else {
+			ds.Status.LastScaleUp = &nowMeta
+		}
 	}
 	if err := r.Status().Update(ctx, &ds); err != nil {
 		logger.Error(err, "failed to update status")
@@ -194,15 +200,7 @@ func extractObjects(list client.ObjectList) []client.Object {
 }
 
 func (r *DownscaleScheduleReconciler) isNamespaceExcluded(obj client.Object, excludeNamespaces []string) bool {
-	if len(excludeNamespaces) == 0 {
-		return false
-	}
-	for _, ns := range excludeNamespaces {
-		if ns == obj.GetNamespace() {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(excludeNamespaces, obj.GetNamespace())
 }
 
 func (r *DownscaleScheduleReconciler) isResourceExcluded(obj client.Object, excludes []downscalerv1alpha1.ResourceRef) bool {
