@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -16,6 +17,8 @@ import (
 	downscalerv1alpha1 "github.com/sipherxyz/kube-scaledown/api/v1alpha1"
 	"github.com/sipherxyz/kube-scaledown/internal/scaler"
 )
+
+const weekdayAlwaysUptime = "Mon-Fri 00:00-24:00 Asia/Ho_Chi_Minh"
 
 func TestReconcileOnlyScalesIncludedNamespaces(t *testing.T) {
 	ctx := context.Background()
@@ -46,6 +49,126 @@ func TestReconcileOnlyScalesIncludedNamespaces(t *testing.T) {
 	if status.ManagedResources != 1 || status.ScaledDownResources != 1 {
 		t.Fatalf("first downtime status = managed %d, scaled down %d; want 1, 1", status.ManagedResources, status.ScaledDownResources)
 	}
+}
+
+func TestReconcileDoesNotRestoreResourceOwnedByAnotherSchedule(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	downtimeSchedule := testSchedule("preview-downtime")
+	downtimeSchedule.Spec.IncludeNamespaces = []string{"preview"}
+	broadUptimeSchedule := testSchedule("broad-uptime")
+	broadUptimeSchedule.Spec.Uptime = weekdayAlwaysUptime
+	broadUptimeSchedule.Spec.ExcludeNamespaces = []string{"preview"}
+	deployment := testDeployment("preview-api", "preview", 3)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&downscalerv1alpha1.DownscaleSchedule{}).
+		WithObjects(downtimeSchedule, broadUptimeSchedule, deployment).
+		Build()
+	reconciler := &DownscaleScheduleReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Registry: scaler.NewRegistry(),
+		Now:      func() time.Time { return scheduleTime(t, 22) },
+	}
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(downtimeSchedule)}); err != nil {
+		t.Fatalf("downtime Reconcile() error = %v", err)
+	}
+	assertDeploymentReplicas(t, ctx, c, client.ObjectKeyFromObject(deployment), 0)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(broadUptimeSchedule)}); err != nil {
+		t.Fatalf("broad uptime Reconcile() error = %v", err)
+	}
+
+	assertDeploymentReplicas(t, ctx, c, client.ObjectKeyFromObject(deployment), 0)
+	var stored appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(deployment), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations[scaler.AnnotationOriginalReplicas] != "3" {
+		t.Fatalf("original replicas annotation = %q, want 3", stored.Annotations[scaler.AnnotationOriginalReplicas])
+	}
+	if stored.Annotations[scaler.AnnotationOwner] != "default/preview-downtime" {
+		t.Fatalf("owner annotation = %q, want default/preview-downtime", stored.Annotations[scaler.AnnotationOwner])
+	}
+}
+
+func TestReconcileRestoresResourceWhenOwningScheduleNoLongerExists(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	downtimeSchedule := testSchedule("deleted-owner")
+	downtimeSchedule.Spec.IncludeNamespaces = []string{"preview"}
+	broadUptimeSchedule := testSchedule("broad-uptime-orphan-cleanup")
+	broadUptimeSchedule.Spec.Uptime = weekdayAlwaysUptime
+	broadUptimeSchedule.Spec.ExcludeNamespaces = []string{"preview"}
+	deployment := testDeployment("orphaned-preview-api", "preview", 3)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&downscalerv1alpha1.DownscaleSchedule{}).
+		WithObjects(downtimeSchedule, broadUptimeSchedule, deployment).
+		Build()
+	reconciler := &DownscaleScheduleReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Registry: scaler.NewRegistry(),
+		Now:      func() time.Time { return scheduleTime(t, 22) },
+	}
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(downtimeSchedule)}); err != nil {
+		t.Fatalf("downtime Reconcile() error = %v", err)
+	}
+	assertDeploymentReplicas(t, ctx, c, client.ObjectKeyFromObject(deployment), 0)
+	if err := c.Delete(ctx, downtimeSchedule); err != nil {
+		t.Fatalf("deleting owning schedule: %v", err)
+	}
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(broadUptimeSchedule)}); err != nil {
+		t.Fatalf("orphan cleanup Reconcile() error = %v", err)
+	}
+
+	assertDeploymentReplicas(t, ctx, c, client.ObjectKeyFromObject(deployment), 3)
+	var stored appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(deployment), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := stored.Annotations[scaler.AnnotationOwner]; ok {
+		t.Fatal("orphaned owner annotation was not removed")
+	}
+}
+
+func TestDeletedScheduleReconcileRestoresItsOwnedResources(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	downtimeSchedule := testSchedule("deleted-owner-reconcile")
+	downtimeSchedule.Spec.IncludeNamespaces = []string{"preview"}
+	deployment := testDeployment("deleted-owner-api", "preview", 3)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&downscalerv1alpha1.DownscaleSchedule{}).
+		WithObjects(downtimeSchedule, deployment).
+		Build()
+	reconciler := &DownscaleScheduleReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Registry: scaler.NewRegistry(),
+		Now:      func() time.Time { return scheduleTime(t, 22) },
+	}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(downtimeSchedule)}
+
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatalf("downtime Reconcile() error = %v", err)
+	}
+	assertDeploymentReplicas(t, ctx, c, client.ObjectKeyFromObject(deployment), 0)
+	if err := c.Delete(ctx, downtimeSchedule); err != nil {
+		t.Fatalf("deleting owning schedule: %v", err)
+	}
+
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatalf("deleted owner Reconcile() error = %v", err)
+	}
+
+	assertDeploymentReplicas(t, ctx, c, client.ObjectKeyFromObject(deployment), 3)
 }
 
 func TestReconcileRecordsOnlyStateTransitionTimes(t *testing.T) {
@@ -100,6 +223,9 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	if err := downscalerv1alpha1.AddToScheme(scheme); err != nil {

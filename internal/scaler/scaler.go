@@ -15,6 +15,7 @@ import (
 const (
 	AnnotationOriginalReplicas       = "downscaler.sipher.gg/original-replicas"
 	LegacyAnnotationOriginalReplicas = "downscaler/original-replicas"
+	AnnotationOwner                  = "downscaler.sipher.gg/owner"
 	AnnotationExclude                = "downscaler.sipher.gg/exclude"
 )
 
@@ -59,6 +60,15 @@ func (r *Registry) Get(name string) (Scaler, error) {
 	return s, nil
 }
 
+// All returns every registered scaler.
+func (r *Registry) All() []Scaler {
+	result := make([]Scaler, 0, len(r.scalers))
+	for _, s := range r.scalers {
+		result = append(result, s)
+	}
+	return result
+}
+
 // IsExcluded checks if a resource has the exclude annotation.
 func IsExcluded(obj client.Object) bool {
 	annotations := obj.GetAnnotations()
@@ -70,11 +80,18 @@ func IsExcluded(obj client.Object) bool {
 
 // SaveOriginalReplicas stores the current replica count as an annotation.
 func SaveOriginalReplicas(obj client.Object, replicas int32) {
+	saveOriginalReplicas(obj, replicas, "")
+}
+
+func saveOriginalReplicas(obj client.Object, replicas int32, owner string) {
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
 	annotations[AnnotationOriginalReplicas] = strconv.Itoa(int(replicas))
+	if owner != "" {
+		annotations[AnnotationOwner] = owner
+	}
 	obj.SetAnnotations(annotations)
 }
 
@@ -106,7 +123,19 @@ func ClearOriginalReplicas(obj client.Object) {
 	}
 	delete(annotations, AnnotationOriginalReplicas)
 	delete(annotations, LegacyAnnotationOriginalReplicas)
+	delete(annotations, AnnotationOwner)
 	obj.SetAnnotations(annotations)
+}
+
+// IsOwnedBy reports whether owner may restore a scaled-down resource. Resources
+// without an owner annotation predate schedule ownership and remain restorable.
+func IsOwnedBy(obj client.Object, owner string) bool {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		return false
+	}
+	currentOwner, hasOwner := annotations[AnnotationOwner]
+	return !hasOwner || currentOwner == owner
 }
 
 // SideEffectScaler can apply side effects before scaling operations.
@@ -119,6 +148,12 @@ type SideEffectScaler interface {
 
 // ScaleDown scales a resource down and saves original replicas. Returns true if scaled.
 func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object, downtimeReplicas int32) (bool, error) {
+	return ScaleDownOwned(ctx, c, s, obj, downtimeReplicas, "")
+}
+
+// ScaleDownOwned scales a resource down and records the schedule that owns the
+// saved state. An existing state owned by another schedule is left unchanged.
+func ScaleDownOwned(ctx context.Context, c client.Client, s Scaler, obj client.Object, downtimeReplicas int32, owner string) (bool, error) {
 	key := client.ObjectKeyFromObject(obj)
 	preservedAnnotations := make(map[string]string)
 	scaled := false
@@ -132,6 +167,9 @@ func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object
 			return err
 		}
 		mergeAnnotations(currentObj, preservedAnnotations)
+		if hasOriginalReplicas(currentObj) && !IsOwnedBy(currentObj, owner) {
+			return nil
+		}
 
 		current, err := s.GetReplicas(currentObj)
 		if err != nil {
@@ -150,7 +188,7 @@ func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object
 				return fmt.Errorf("pre-scaledown side effects for %s/%s: %w", key.Namespace, key.Name, err)
 			}
 		}
-		SaveOriginalReplicas(currentObj, current)
+		saveOriginalReplicas(currentObj, current, owner)
 		rememberChangedAnnotations(preservedAnnotations, beforeAnnotations, currentObj.GetAnnotations())
 		if err := s.SetReplicas(currentObj, downtimeReplicas); err != nil {
 			return err
@@ -169,6 +207,12 @@ func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object
 
 // ScaleUp restores a resource to its original replicas. Returns true if scaled.
 func ScaleUp(ctx context.Context, c client.Client, s Scaler, obj client.Object) (bool, error) {
+	return ScaleUpOwned(ctx, c, s, obj, "")
+}
+
+// ScaleUpOwned restores a resource only when it is owned by this schedule.
+// Ownerless annotations from older controller versions remain restorable.
+func ScaleUpOwned(ctx context.Context, c client.Client, s Scaler, obj client.Object, owner string) (bool, error) {
 	key := client.ObjectKeyFromObject(obj)
 	scaled := false
 
@@ -179,6 +223,9 @@ func ScaleUp(ctx context.Context, c client.Client, s Scaler, obj client.Object) 
 		}
 		if err := c.Get(ctx, key, currentObj); err != nil {
 			return err
+		}
+		if !IsOwnedBy(currentObj, owner) {
+			return nil
 		}
 
 		original := GetOriginalReplicas(currentObj)
@@ -204,6 +251,18 @@ func ScaleUp(ctx context.Context, c client.Client, s Scaler, obj client.Object) 
 		return false, fmt.Errorf("updating %s/%s: %w", key.Namespace, key.Name, err)
 	}
 	return scaled, nil
+}
+
+func hasOriginalReplicas(obj client.Object) bool {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		return false
+	}
+	if _, ok := annotations[AnnotationOriginalReplicas]; ok {
+		return true
+	}
+	_, ok := annotations[LegacyAnnotationOriginalReplicas]
+	return ok
 }
 
 func newObjectOfSameType(obj client.Object) (client.Object, error) {

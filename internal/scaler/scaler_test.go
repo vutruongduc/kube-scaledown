@@ -116,12 +116,83 @@ func TestGetOriginalReplicas_DefaultsTo1(t *testing.T) {
 }
 
 func TestClearOriginalReplicas(t *testing.T) {
-	deploy := newDeployment("test", 3, map[string]string{AnnotationOriginalReplicas: "3"})
+	deploy := newDeployment("test", 3, map[string]string{
+		AnnotationOriginalReplicas: "3",
+		AnnotationOwner:            "default/nightly",
+	})
 
 	ClearOriginalReplicas(deploy)
-	_, ok := deploy.GetAnnotations()[AnnotationOriginalReplicas]
-	if ok {
+	if _, ok := deploy.GetAnnotations()[AnnotationOriginalReplicas]; ok {
 		t.Error("expected annotation to be cleared")
+	}
+	if _, ok := deploy.GetAnnotations()[AnnotationOwner]; ok {
+		t.Error("expected owner annotation to be cleared")
+	}
+}
+
+func TestScaleUpOwnedOnlyRestoresMatchingOwner(t *testing.T) {
+	ctx := context.Background()
+	deployment := newDeployment("test", 0, map[string]string{
+		AnnotationOriginalReplicas: "4",
+		AnnotationOwner:            "default/preview-downtime",
+	})
+	c := fake.NewClientBuilder().WithObjects(deployment).Build()
+	s := &DeploymentScaler{}
+
+	scaled, err := ScaleUpOwned(ctx, c, s, deployment, "default/broad-uptime")
+	if err != nil {
+		t.Fatalf("ScaleUpOwned() for another owner error = %v", err)
+	}
+	if scaled {
+		t.Fatal("ScaleUpOwned() for another owner = true, want false")
+	}
+	stored := newDeployment("test", 0, nil)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(deployment), stored); err != nil {
+		t.Fatal(err)
+	}
+	if *stored.Spec.Replicas != 0 || stored.Annotations[AnnotationOwner] != "default/preview-downtime" {
+		t.Fatalf("another owner changed resource: replicas=%d annotations=%v", *stored.Spec.Replicas, stored.Annotations)
+	}
+
+	scaled, err = ScaleUpOwned(ctx, c, s, stored, "default/preview-downtime")
+	if err != nil {
+		t.Fatalf("ScaleUpOwned() for matching owner error = %v", err)
+	}
+	if !scaled {
+		t.Fatal("ScaleUpOwned() for matching owner = false, want true")
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(deployment), stored); err != nil {
+		t.Fatal(err)
+	}
+	if *stored.Spec.Replicas != 4 {
+		t.Fatalf("restored replicas = %d, want 4", *stored.Spec.Replicas)
+	}
+	if _, ok := stored.Annotations[AnnotationOwner]; ok {
+		t.Fatal("owner annotation was not removed after restore")
+	}
+}
+
+func TestScaleUpOwnedRestoresLegacyOwnerlessState(t *testing.T) {
+	ctx := context.Background()
+	deployment := newDeployment("legacy", 0, map[string]string{LegacyAnnotationOriginalReplicas: "2"})
+	c := fake.NewClientBuilder().WithObjects(deployment).Build()
+
+	scaled, err := ScaleUpOwned(ctx, c, &DeploymentScaler{}, deployment, "default/nightly")
+	if err != nil {
+		t.Fatalf("ScaleUpOwned() error = %v", err)
+	}
+	if !scaled {
+		t.Fatal("ScaleUpOwned() = false, want true for legacy ownerless state")
+	}
+	stored := newDeployment("legacy", 0, nil)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(deployment), stored); err != nil {
+		t.Fatal(err)
+	}
+	if *stored.Spec.Replicas != 2 {
+		t.Fatalf("restored replicas = %d, want 2", *stored.Spec.Replicas)
+	}
+	if _, ok := stored.Annotations[LegacyAnnotationOriginalReplicas]; ok {
+		t.Fatal("legacy original replicas annotation was not removed")
 	}
 }
 

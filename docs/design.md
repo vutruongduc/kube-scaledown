@@ -114,7 +114,10 @@ Multiple `DownscaleSchedule` resources can coexist (e.g., one for services, one 
 
 ### Conflict Resolution
 
-If multiple `DownscaleSchedule` CRDs match the same resource, the **most restrictive schedule wins** — if any schedule says "downtime", the resource scales down. This prevents accidental uptime from a broad schedule overriding a specific one.
+The schedule that scales a resource down owns its saved state. Other schedules
+cannot restore or replace that state while the owner exists. If schedules have
+overlapping resource scopes, avoid conflicting uptime windows: an owner can
+briefly restore a resource before another downtime schedule reconciles.
 
 ## Supported Resource Types
 

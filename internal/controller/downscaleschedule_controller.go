@@ -3,10 +3,13 @@ package controller
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,7 +43,10 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	var ds downscalerv1alpha1.DownscaleSchedule
 	if err := r.Get(ctx, req.NamespacedName, &ds); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			return r.restoreDeletedOwner(ctx, req.String())
+		}
+		return ctrl.Result{}, err
 	}
 
 	uptimeRules, err := schedule.Parse(ds.Spec.Uptime)
@@ -51,6 +57,7 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	now := r.now()
 	isUptime := schedule.IsActive(uptimeRules, now)
+	owner := client.ObjectKeyFromObject(&ds).String()
 	state := "downtime"
 	if isUptime {
 		state = "uptime"
@@ -77,7 +84,15 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				r.isResourceExcluded(obj, ds.Spec.ExcludeResources)
 			if excluded {
 				if hasOriginalReplicasAnnotation(obj) {
-					scaled, err := scaler.ScaleUp(ctx, r.Client, s, obj)
+					restoreOwner, canRestore, err := r.ownerForRestore(ctx, obj, owner)
+					if err != nil {
+						logger.Error(err, "failed to verify scaled resource owner", "resource", obj.GetName(), "namespace", obj.GetNamespace())
+						continue
+					}
+					if !canRestore {
+						continue
+					}
+					scaled, err := scaler.ScaleUpOwned(ctx, r.Client, s, obj, restoreOwner)
 					if err != nil {
 						logger.Error(err, "failed to restore excluded resource", "resource", obj.GetName(), "namespace", obj.GetNamespace())
 						continue
@@ -93,7 +108,15 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 			if isUptime {
 				if hasOriginalReplicasAnnotation(obj) {
-					scaled, err := scaler.ScaleUp(ctx, r.Client, s, obj)
+					restoreOwner, canRestore, err := r.ownerForRestore(ctx, obj, owner)
+					if err != nil {
+						logger.Error(err, "failed to verify scaled resource owner", "resource", obj.GetName(), "namespace", obj.GetNamespace())
+						continue
+					}
+					if !canRestore {
+						continue
+					}
+					scaled, err := scaler.ScaleUpOwned(ctx, r.Client, s, obj, restoreOwner)
 					if err != nil {
 						logger.Error(err, "failed to scale up", "resource", obj.GetName(), "namespace", obj.GetNamespace())
 						continue
@@ -103,7 +126,7 @@ func (r *DownscaleScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					}
 				}
 			} else {
-				scaled, err := scaler.ScaleDown(ctx, r.Client, s, obj, ds.Spec.DowntimeReplicas)
+				scaled, err := scaler.ScaleDownOwned(ctx, r.Client, s, obj, ds.Spec.DowntimeReplicas, owner)
 				if err != nil {
 					logger.Error(err, "failed to scale down", "resource", obj.GetName(), "namespace", obj.GetNamespace())
 					continue
@@ -222,6 +245,58 @@ func hasOriginalReplicasAnnotation(obj client.Object) bool {
 	}
 	_, ok := annotations[scaler.LegacyAnnotationOriginalReplicas]
 	return ok
+}
+
+func (r *DownscaleScheduleReconciler) ownerForRestore(ctx context.Context, obj client.Object, reconcilerOwner string) (string, bool, error) {
+	annotations := obj.GetAnnotations()
+	recordedOwner, hasOwner := annotations[scaler.AnnotationOwner]
+	if !hasOwner || recordedOwner == reconcilerOwner {
+		return reconcilerOwner, true, nil
+	}
+
+	namespace, name, valid := strings.Cut(recordedOwner, "/")
+	if !valid || namespace == "" || name == "" {
+		return recordedOwner, true, nil
+	}
+
+	var ownerSchedule downscalerv1alpha1.DownscaleSchedule
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &ownerSchedule)
+	if apierrors.IsNotFound(err) {
+		return recordedOwner, true, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !ownerSchedule.DeletionTimestamp.IsZero() {
+		return recordedOwner, true, nil
+	}
+	return "", false, nil
+}
+
+func (r *DownscaleScheduleReconciler) restoreDeletedOwner(ctx context.Context, owner string) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	for _, s := range r.Registry.All() {
+		list := s.NewObjectList()
+		if err := r.List(ctx, list); err != nil {
+			if apimeta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+				continue
+			}
+			return ctrl.Result{}, err
+		}
+		for _, obj := range extractObjects(list) {
+			if obj.GetAnnotations()[scaler.AnnotationOwner] != owner {
+				continue
+			}
+			scaled, err := scaler.ScaleUpOwned(ctx, r.Client, s, obj, owner)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if scaled {
+				logger.Info("Restored resource after owner schedule deletion", "resource", obj.GetName(), "namespace", obj.GetNamespace())
+			}
+		}
+	}
+	return ctrl.Result{}, nil
 }
 
 func (r *DownscaleScheduleReconciler) SetupWithManager(mgr ctrl.Manager) error {
