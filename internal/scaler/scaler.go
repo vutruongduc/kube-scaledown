@@ -3,8 +3,12 @@ package scaler
 import (
 	"context"
 	"fmt"
+	"maps"
+	"reflect"
 	"strconv"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -87,7 +91,7 @@ func GetOriginalReplicas(obj client.Object) int32 {
 	if !ok {
 		return 1
 	}
-	n, err := strconv.Atoi(val)
+	n, err := strconv.ParseInt(val, 10, 32)
 	if err != nil {
 		return 1
 	}
@@ -115,58 +119,127 @@ type SideEffectScaler interface {
 
 // ScaleDown scales a resource down and saves original replicas. Returns true if scaled.
 func ScaleDown(ctx context.Context, c client.Client, s Scaler, obj client.Object, downtimeReplicas int32) (bool, error) {
-	current, err := s.GetReplicas(obj)
-	if err != nil {
-		return false, err
-	}
-	if current <= downtimeReplicas {
-		return false, nil
-	}
-	if ses, ok := s.(SideEffectScaler); ok {
-		if err := ses.BeforeScaleDown(ctx, c, obj); err != nil {
-			return false, fmt.Errorf("pre-scaledown side effects for %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	key := client.ObjectKeyFromObject(obj)
+	preservedAnnotations := make(map[string]string)
+	scaled := false
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		currentObj, err := newObjectOfSameType(obj)
+		if err != nil {
+			return err
 		}
+		if err := c.Get(ctx, key, currentObj); err != nil {
+			return err
+		}
+		mergeAnnotations(currentObj, preservedAnnotations)
+
+		current, err := s.GetReplicas(currentObj)
+		if err != nil {
+			return err
+		}
+		if current <= downtimeReplicas {
+			if len(preservedAnnotations) > 0 {
+				return c.Update(ctx, currentObj)
+			}
+			return nil
+		}
+
+		beforeAnnotations := copyAnnotations(currentObj.GetAnnotations())
+		if ses, ok := s.(SideEffectScaler); ok {
+			if err := ses.BeforeScaleDown(ctx, c, currentObj); err != nil {
+				return fmt.Errorf("pre-scaledown side effects for %s/%s: %w", key.Namespace, key.Name, err)
+			}
+		}
+		SaveOriginalReplicas(currentObj, current)
+		rememberChangedAnnotations(preservedAnnotations, beforeAnnotations, currentObj.GetAnnotations())
+		if err := s.SetReplicas(currentObj, downtimeReplicas); err != nil {
+			return err
+		}
+		if err := c.Update(ctx, currentObj); err != nil {
+			return err
+		}
+		scaled = true
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("updating %s/%s: %w", key.Namespace, key.Name, err)
 	}
-	SaveOriginalReplicas(obj, current)
-	if err := s.SetReplicas(obj, downtimeReplicas); err != nil {
-		return false, err
-	}
-	if err := c.Update(ctx, obj); err != nil {
-		return false, fmt.Errorf("updating %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
-	}
-	return true, nil
+	return scaled, nil
 }
 
 // ScaleUp restores a resource to its original replicas. Returns true if scaled.
 func ScaleUp(ctx context.Context, c client.Client, s Scaler, obj client.Object) (bool, error) {
-	original := GetOriginalReplicas(obj)
-	current, err := s.GetReplicas(obj)
-	if err != nil {
-		return false, err
-	}
-	if current >= original {
+	key := client.ObjectKeyFromObject(obj)
+	scaled := false
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		currentObj, err := newObjectOfSameType(obj)
+		if err != nil {
+			return err
+		}
+		if err := c.Get(ctx, key, currentObj); err != nil {
+			return err
+		}
+
+		original := GetOriginalReplicas(currentObj)
+		current, err := s.GetReplicas(currentObj)
+		if err != nil {
+			return err
+		}
 		if ses, ok := s.(SideEffectScaler); ok {
-			if err := ses.BeforeScaleUp(ctx, c, obj); err != nil {
-				return false, fmt.Errorf("pre-scaleup side effects for %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+			if err := ses.BeforeScaleUp(ctx, c, currentObj); err != nil {
+				return fmt.Errorf("pre-scaleup side effects for %s/%s: %w", key.Namespace, key.Name, err)
 			}
 		}
-		ClearOriginalReplicas(obj)
-		if err := c.Update(ctx, obj); err != nil {
-			return false, fmt.Errorf("clearing annotation on %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+		ClearOriginalReplicas(currentObj)
+		if current < original {
+			if err := s.SetReplicas(currentObj, original); err != nil {
+				return err
+			}
+			scaled = true
 		}
-		return false, nil
+		return c.Update(ctx, currentObj)
+	})
+	if err != nil {
+		return false, fmt.Errorf("updating %s/%s: %w", key.Namespace, key.Name, err)
 	}
-	if ses, ok := s.(SideEffectScaler); ok {
-		if err := ses.BeforeScaleUp(ctx, c, obj); err != nil {
-			return false, fmt.Errorf("pre-scaleup side effects for %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	return scaled, nil
+}
+
+func newObjectOfSameType(obj client.Object) (client.Object, error) {
+	t := reflect.TypeOf(obj)
+	if t == nil || t.Kind() != reflect.Ptr {
+		return nil, fmt.Errorf("expected pointer Kubernetes object, got %T", obj)
+	}
+	fresh, ok := reflect.New(t.Elem()).Interface().(client.Object)
+	if !ok {
+		return nil, fmt.Errorf("expected Kubernetes object, got %T", obj)
+	}
+	if obj.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{}) {
+		fresh.GetObjectKind().SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
+	}
+	return fresh, nil
+}
+
+func copyAnnotations(annotations map[string]string) map[string]string {
+	result := make(map[string]string, len(annotations))
+	maps.Copy(result, annotations)
+	return result
+}
+
+func rememberChangedAnnotations(preserved, before, after map[string]string) {
+	for key, value := range after {
+		if previous, ok := before[key]; !ok || previous != value {
+			preserved[key] = value
 		}
 	}
-	ClearOriginalReplicas(obj)
-	if err := s.SetReplicas(obj, original); err != nil {
-		return false, err
+}
+
+func mergeAnnotations(obj client.Object, additions map[string]string) {
+	if len(additions) == 0 {
+		return
 	}
-	if err := c.Update(ctx, obj); err != nil {
-		return false, fmt.Errorf("updating %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
-	}
-	return true, nil
+	annotations := copyAnnotations(obj.GetAnnotations())
+	maps.Copy(annotations, additions)
+	obj.SetAnnotations(annotations)
 }

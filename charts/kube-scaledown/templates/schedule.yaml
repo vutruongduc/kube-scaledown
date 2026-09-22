@@ -11,6 +11,16 @@ spec:
   downtimeReplicas: {{ .Values.schedule.downtimeReplicas }}
   includeResources:
     {{- toYaml .Values.schedule.includeResources | nindent 4 }}
+  {{- with .Values.schedule.includeNamespaces }}
+  includeNamespaces:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.schedule.excludeNamespaces }}
   excludeNamespaces:
-    {{- toYaml .Values.schedule.excludeNamespaces | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.schedule.excludeResources }}
+  excludeResources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}

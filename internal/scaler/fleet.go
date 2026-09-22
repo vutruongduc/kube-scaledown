@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -36,6 +37,9 @@ func (f *FleetScaler) GetReplicas(obj client.Object) (int32, error) {
 	}
 	if !found {
 		return 1, nil
+	}
+	if replicas < 0 || replicas > math.MaxInt32 {
+		return 0, fmt.Errorf("spec.replicas %d is outside the int32 range", replicas)
 	}
 	return int32(replicas), nil
 }
@@ -102,7 +106,7 @@ func (f *FleetScaler) BeforeScaleUp(ctx context.Context, c client.Client, obj cl
 		return nil
 	}
 
-	var spec map[string]interface{}
+	var spec map[string]any
 	if err := json.Unmarshal([]byte(specJSON), &spec); err != nil {
 		return fmt.Errorf("unmarshaling FleetAutoscaler spec: %w", err)
 	}

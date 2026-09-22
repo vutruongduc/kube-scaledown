@@ -14,8 +14,6 @@ import (
 	"github.com/sipherxyz/kube-scaledown/internal/scaler"
 )
 
-func int32Ptr(i int32) *int32 { return &i }
-
 var _ = Describe("DownscaleSchedule Controller", func() {
 
 	const timeout = 10 * time.Second
@@ -32,7 +30,7 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 					Namespace: "test-ns",
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: int32Ptr(3),
+					Replicas: new(int32(3)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"app": "uptime-test"},
 					},
@@ -80,7 +78,7 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 					Namespace: "test-ns",
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: int32Ptr(5),
+					Replicas: new(int32(5)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"app": "downtime-test"},
 					},
@@ -135,7 +133,7 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: int32Ptr(2),
+					Replicas: new(int32(2)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"app": "excluded-test"},
 					},
@@ -184,7 +182,7 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: int32Ptr(0),
+					Replicas: new(int32(0)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"app": "excluded-namespace-restore-test"},
 					},
@@ -237,7 +235,7 @@ var _ = Describe("DownscaleSchedule Controller", func() {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: int32Ptr(0),
+					Replicas: new(int32(0)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"app": "legacy-restore-test"},
 					},

@@ -70,9 +70,8 @@ metadata:
 spec:
   # Schedule (timezone-aware)
   uptime: "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh"
-  downtime: "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh"
 
-  # What to scale down to (default: 0)
+  # Everything outside uptime is downtime. Scale to this count (default: 0).
   downtimeReplicas: 0
 
   # Resource types to manage

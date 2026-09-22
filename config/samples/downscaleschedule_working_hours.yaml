@@ -5,7 +5,6 @@ metadata:
   namespace: kube-scaledown-system
 spec:
   uptime: "Mon-Sat 08:00-20:00 Asia/Ho_Chi_Minh"
-  downtime: "Mon-Sat 20:00-08:00 Asia/Ho_Chi_Minh, Sun 00:00-24:00 Asia/Ho_Chi_Minh"
   downtimeReplicas: 0
   includeResources:
     - deployments
